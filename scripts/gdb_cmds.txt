@@ -1,0 +1,68 @@
+# gdb_cmds.txt - GDB Batch 取证命令模板
+# 占位符（由 gdb_batch.sh 自动替换）:
+#   {{SYSROOT}}          - sysroot 路径（来自 context.json）
+#   {{SOLIB_SEARCH_PATH}} - 动态库搜索路径
+#   {{MAIN_ELF_PATH}}    - 主程序 ELF 路径
+#   {{CORE_FILE}}        - core 文件路径
+#
+# 命令集（12 个，分 3 层）:
+#
+# [基础层] 栈与寄存器 — 回答"在哪崩溃、调用链是什么"
+#   info registers       - 崩溃时寄存器快照
+#   bt full              - 当前线程完整回溯（含局部变量）
+#   info args            - 崩溃帧函数参数（定位"谁传了坏指针"）
+#   info locals          - 崩溃帧局部变量（函数内部状态）
+#
+# [上下文层] 线程与内存 — 回答"其他线程在做什么、地址是否映射"
+#   info sharedlibrary   - 已加载共享库及符号状态
+#   info proc mappings   - 内存映射（判断 SEGV 地址是否映射，区分 UAF/权限错误）
+#   info threads         - 线程列表
+#   thread apply all bt full - 所有线程完整回溯（含局部变量，抓竞态证据）
+#
+# [指令层] 崩溃指令与信号 — 回答"哪条指令崩溃、信号详情"
+#   x/16i $pc            - 崩溃点反汇编（区分 load/store 崩溃，看指令-寄存器对应）
+#   info frame           - 当前帧详情（saved registers、返回地址、栈帧位置）
+#   info signal SIGSEGV SIGILL SIGABRT SIGFPE SIGBUS - 信号详情
+
+set pagination off
+set print pretty on
+set print frame-arguments all
+
+set solib-search-path {{SOLIB_SEARCH_PATH}}
+file {{MAIN_ELF_PATH}}
+core-file {{CORE_FILE}}
+
+echo === REGISTERS ===\n
+info registers
+
+echo === BT ===\n
+bt full
+
+echo === ARGS ===\n
+info args
+
+echo === LOCALS ===\n
+info locals
+
+echo === SHAREDLIB ===\n
+info sharedlibrary
+
+echo === MAPPINGS ===\n
+info proc mappings
+
+echo === THREADS ===\n
+info threads
+
+echo === BT_ALL ===\n
+thread apply all bt full
+
+echo === DISAS ===\n
+x/16i $pc
+
+echo === FRAME ===\n
+info frame
+
+echo === SIGNAL ===\n
+info signals
+
+quit
