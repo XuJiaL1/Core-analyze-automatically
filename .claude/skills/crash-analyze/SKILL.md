@@ -15,8 +15,10 @@ allowed-tools: Bash, Read, Task, AskUserQuestion
 ## 路径定位
 
 **脚本目录通过以下方式定位（不写死路径）**：
-- 优先用环境变量 `CRASH_SCRIPT_DIR`
-- 否则用 Bash 搜索：`SCRIPT_DIR="$(find / -path '*/scripts/run_pipeline.sh' -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)"`
+- 优先用环境变量 `CRASH_SCRIPT_DIR`（crash 分析脚本）和 `RAG_SCRIPT_DIR`（RAG 脚本）
+- 否则用 Bash 搜索：
+  - `SCRIPT_DIR="$(find / -path '*/scripts/run_pipeline.sh' -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)"`
+  - `RAG_SCRIPT_DIR="$(find / -path '*/scripts/rag_search.py' -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)"`
 - 若都找不到，用 AskUserQuestion 询问用户脚本目录位置
 
 ---
@@ -41,7 +43,20 @@ python3 $SCRIPT_DIR/fetch_report.py <URL> [工作目录]
 
 `$WORK_DIR` 从输出中 `[Stage 0] 工作目录: xxx` 那行提取。
 
-### 步骤 2：询问是否深入分析（1 次 AskUserQuestion 调用）
+### 步骤 3：RAG 检索相似案例（1 次 Bash 调用）
+
+在 AI 分析前，先检索知识库中的历史相似案例：
+
+```bash
+python3 $RAG_SCRIPT_DIR/rag_search.py --work-dir $WORK_DIR --action search
+```
+
+- `$RAG_SCRIPT_DIR` 定位方式同 `$SCRIPT_DIR`（优先环境变量 `RAG_SCRIPT_DIR`，否则搜索 `*/scripts/rag_search.py`）
+- 脚本会调 RAG Server `/search` 接口，将相似案例保存到 `$WORK_DIR/rag_hits.json`
+- 输出会打印命中条数和每条的 score/signature/signal/arch/version
+- **如果 RAG Server 不可达**：打印提示后跳过，不影响后续分析（RAG 是增强，不是必需）
+
+### 步骤 4：询问是否深入分析（1 次 AskUserQuestion 调用）
 
 用 AskUserQuestion 询问用户：
 
@@ -49,22 +64,34 @@ python3 $SCRIPT_DIR/fetch_report.py <URL> [工作目录]
 > - 选项 A：无，直接生成报告
 > - 选项 B：有 ELF，提供路径继续深入
 
-- **选 A** → 跳到步骤 3
+- **选 A** → 跳到步骤 5
 - **选 B** → 用户提供 core 文件或 ELF 路径后，转走 **Core 文件流程**（Stage 1-3），用已有 structured.json 的模块地址信息辅助
 
-### 步骤 3：AI 分析（1 次 Task 调用）
+### 步骤 5：AI 分析（1 次 Task 调用）
 
 用 Task 工具调用 `crash-analyzer` Subagent：
 
 ```
-Task(subagent_type="general-purpose", prompt="分析工作目录 $WORK_DIR 中的 Crash 数据，读取 structured.json，生成 crash_report.md。数据来源为 web_report，无 gdb_raw.txt")
+Task(subagent_type="general-purpose", prompt="分析工作目录 $WORK_DIR 中的 Crash 数据，读取 structured.json 和 rag_hits.json，生成 crash_report.md。数据来源为 web_report，无 gdb_raw.txt。rag_hits.json 是 RAG 检索到的历史相似案例，参考其 analysis 和 solution 字段")
 ```
 
 Subagent 会生成 `$WORK_DIR/crash_report.md`。
 
-### 步骤 4：呈现结果（1 次 Read 调用）
+### 步骤 6：呈现结果（1 次 Read 调用）
 
 读取 `$WORK_DIR/crash_report.md`，向用户展示报告内容。告知用户工作目录路径。
+
+### 步骤 7：入库新案例（1 次 Bash 调用）
+
+分析完成后，将新案例入库到 RAG 知识库（status=pending）：
+
+```bash
+python3 $RAG_SCRIPT_DIR/rag_search.py --work-dir $WORK_DIR --action ingest
+```
+
+- 脚本会调 RAG Server `/ingest` 接口，将 structured.json + crash_report.md 入库
+- 同 source_url 重复入库会自动覆盖（以 source_url 的 MD5 作为 point id）
+- **如果 RAG Server 不可达**：打印提示后跳过
 
 ---
 
@@ -92,21 +119,44 @@ bash $SCRIPT_DIR/run_pipeline.sh <core文件>
 
 脚本输出末尾会打印崩溃信号、调用栈层数、栈顶函数等关键信息，直接读取即可，**不需要再 Read context.json 或 structured.json 验证**。
 
-### 步骤 2：AI 分析（1 次 Task 调用）
+### 步骤 2：RAG 检索相似案例（1 次 Bash 调用）
+
+在 AI 分析前，先检索知识库中的历史相似案例：
+
+```bash
+python3 $RAG_SCRIPT_DIR/rag_search.py --work-dir $WORK_DIR --action search
+```
+
+- `$RAG_SCRIPT_DIR` 定位方式同 `$SCRIPT_DIR`（优先环境变量 `RAG_SCRIPT_DIR`，否则搜索 `*/scripts/rag_search.py`）
+- 脚本会调 RAG Server `/search` 接口，将相似案例保存到 `$WORK_DIR/rag_hits.json`
+- **如果 RAG Server 不可达**：打印提示后跳过，不影响后续分析（RAG 是增强，不是必需）
+
+### 步骤 3：AI 分析（1 次 Task 调用）
 
 用 Task 工具调用 `crash-analyzer` Subagent：
 
 ```
-Task(subagent_type="general-purpose", prompt="分析工作目录 $WORK_DIR 中的 Crash 数据，读取 structured.json 和 gdb_raw.txt，生成 crash_report.md")
+Task(subagent_type="general-purpose", prompt="分析工作目录 $WORK_DIR 中的 Crash 数据，读取 structured.json、gdb_raw.txt 和 rag_hits.json，生成 crash_report.md。rag_hits.json 是 RAG 检索到的历史相似案例，参考其 analysis 和 solution 字段")
 ```
 
 `$WORK_DIR` 从步骤 1 的输出中提取（`[Pipeline] 工作目录: xxx` 那行）。
 
 Subagent 会生成 `$WORK_DIR/crash_report.md`。
 
-### 步骤 3：呈现结果（1 次 Read 调用）
+### 步骤 4：呈现结果（1 次 Read 调用）
 
 读取 `$WORK_DIR/crash_report.md`，向用户展示报告内容。告知用户工作目录路径。
+
+### 步骤 5：入库新案例（1 次 Bash 调用）
+
+分析完成后，将新案例入库到 RAG 知识库（status=pending）：
+
+```bash
+python3 $RAG_SCRIPT_DIR/rag_search.py --work-dir $WORK_DIR --action ingest
+```
+
+- 脚本会调 RAG Server `/ingest` 接口，将 structured.json + crash_report.md 入库
+- **如果 RAG Server 不可达**：打印提示后跳过
 
 ## 关键设计：减少 LLM round-trip
 

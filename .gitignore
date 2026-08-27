@@ -1,0 +1,31 @@
+# 大文件 / 二进制 / 源码目录
+gdb-12.1/
+gdb-14.2/
+breakpad/
+breakpad-main/
+elfutils-elfutils-0.186/
+debuginfod-server/
+debuginfod-symbols/
+patches/
+
+# core dump 和二进制
+*.dump
+*.dmp
+*.core
+core-*
+core.*
+cc-switch
+davinci
+e0d*
+*.sym
+*.vsix
+
+# Python
+__pycache__/
+*.pyc
+
+# 临时和敏感
+.gdb_history
+.claude/settings.local.json
+交接文档.md
+自动流程.md

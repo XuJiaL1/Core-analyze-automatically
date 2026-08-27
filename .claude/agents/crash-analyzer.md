@@ -12,6 +12,7 @@ model: sonnet
 你会收到一个工作目录路径，里面包含：
 - `structured.json` — 结构化数据（两种来源都会有）
 - `context.json` — 环境信息（两种来源都会有）
+- `rag_hits.json` — RAG 检索到的历史相似案例（**可能不存在**，RAG Server 不可达时缺失）
 
 **根据 `structured.json` 的 `source` 字段判断数据来源**：
 - `source: "web_report"` — 来自网页 Crash Report，**无 `gdb_raw.txt`**，帧信息来自 breakpad 格式
@@ -46,7 +47,16 @@ model: sonnet
    - `crash_locals`：崩溃函数局部变量，反映函数内部状态
    - `memory_mappings`：内存映射表，判断崩溃地址是否映射（区分 UAF/权限错误/堆损坏）
    - `signal_info`：信号处理状态（stop/print/pass_to_program）
-6. **生成 Crash Report**
+6. **参考历史相似案例**（如果 `rag_hits.json` 存在）：
+   - 读取 `rag_hits.json`，其中 `hits` 数组是 RAG 检索到的历史相似案例
+   - 每条 hit 包含 `score`（相似度）、`crash_signature`、`signal`、`arch`、`version`、`embed_text`、`analysis`（历史分析报告）、`solution`（解决方案）
+   - **利用方式**：
+     - 如果 hit 的 `analysis` 字段存在，参考其根因分析和排查建议
+     - 如果 hit 的 `solution` 字段存在，参考其解决方案
+     - 高 score（>0.95）的案例说明是已知问题，可直接引用历史结论
+     - 跨架构/跨版本的相似案例说明是通用问题，增强根因判断的信心
+   - **注意**：历史案例仅供参考，不能直接照抄。需结合当前 crash 的具体数据独立分析
+7. **生成 Crash Report**
 
 ## 输出格式
 
@@ -93,6 +103,17 @@ model: sonnet
 ## 7. 建议的下一步
 1. （具体的排查建议）
 2. ...
+
+## 8. 相似历史案例（如果 rag_hits.json 存在）
+| score | 签名 | 信号 | 架构 | 版本 | 概要 |
+|-------|------|------|------|------|------|
+| 0.97  | 216977f5a1c7 | SIGABRT | aarch64 | V5.11.0 | reset_user_para_save_param_func assert 失败 |
+| ... | ... | ... | ... | ... | ... |
+
+**参考价值**：
+- （高 score 案例的根因是否与当前一致）
+- （历史案例的 analysis/solution 中可借鉴的结论）
+- （如无相似案例或 score 都较低，说明可能是新问题）
 ```
 
 ## 注意事项
